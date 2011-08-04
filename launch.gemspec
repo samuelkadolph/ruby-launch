@@ -13,7 +13,7 @@ Gem::Specification.new do |s|
 
   s.required_ruby_version = ">= 1.8.7"
 
-  s.files      = Dir["ext/*", "lib/**/*"] + ["LICENSE", "README.md"]
+  s.files      = Dir["ext/*", "lib/**/*"] + ["CHANGELOG", "LICENSE", "README.md"]
   s.test_files = Dir["test/**/*_test.rb"]
   s.extensions = ["ext/extconf.rb"]
 end
