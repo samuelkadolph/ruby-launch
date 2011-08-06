@@ -1,107 +1,49 @@
-require 'rubygems'
-require 'launch'
+=begin
+  Echo server using launchd to manage a socket opened on port 12345.
 
-##
-# This is an echo server that runs using launchd on port 12345.
-#
-# To start, run:
-#
-#   ruby echo.rb net.segment7.launch.echo.plist
-#   launchctl load net.segment7.launch.echo.plist
-#
-# To use the echo server run:
-#
-#   telnet localhost 12345
-#
-# To quit the echo server type ^] followed by ^D
-#
-# To stop run:
-#
-#   launchctl unload net.segment7.launch.echo.plist
+  Usage:
+    gem install launch
+    ruby echo.rb
+=end
 
-class Echo
+require "rubygems"
 
-  include Launch
+begin
+  gem "launch"
+rescue Gem::LoadError
+  raise "You must install the launch gem to use the samples."
+end
 
-  def self.plist name
-    file = File.expand_path __FILE__
-    root = File.expand_path '../..', __FILE__
+require "launch"
 
-    plist = <<-PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>#{name}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>#{Gem.ruby}</string>
-    <string>-I#{root}/lib</string>
-    <string>-I#{root}/ext</string>
-    <string>#{file}</string>
-  </array>
-  <key>ServiceIPC</key>
-  <true/>
-  <key>Sockets</key>
-  <dict>
-    <key>EchoSocket</key>
-    <dict>
-      <key>SockServiceName</key>
-      <string>12345</string>
-    </dict>
-  </dict>
-</dict>
-</plist>
-    PLIST
+job = Launch::Job.new(:label => "org.ruby.echo")
+job.program_arguments << Gem.ruby
+job.program_arguments << "-e"
+job.program_arguments << <<-PROGRAM
+  require "rubygems"
+  require "launch"
 
-    open name, 'w' do |io|
-      io.write plist
-    end
-  end
-
-  def initialize
-    launch_checkin
-  end
-
-  ##
-  # echo lines sent from +socket+
-
-  def echo socket
-    Thread.start do
-      loop do
-        socket.puts socket.gets
+  sockets = Launch::Job.checkin.sockets["echo"]
+  loop do
+    ready = select(sockets).first
+    ready.each do |socket|
+      Thread.start(socket.accept) do |client|
+        loop { client << client.gets }
       end
     end
   end
+PROGRAM
+job.environment_variables = ENV.to_hash
+job.sockets["echo"] = TCPServer.new(12345)
 
-  ##
-  # Listens on +server+ for connections to echo on.
+begin
+  job.submit
 
-  def listen server
-    Thread.start do
-      loop do
-        echo server.accept
-      end
-    end
-  end
-
-  ##
-  # Starts listening on the sockets given by launchd and waits forever
-
-  def run
-    launch_sockets('EchoSocket', TCPServer).each do |server|
-      listen server
-    end
-
-    sleep
-  end
-
+  $stdout.puts "Echo server started on port 12345."
+  $stdout.puts "Press ^C or enter to shut down the server."
+  $stdin.gets
+rescue Interrupt
+  $stdout.puts
+ensure
+  job.remove
 end
-
-if ARGV.empty? then
-  Echo.new.run
-else
-  Echo.plist ARGV.first
-end
-

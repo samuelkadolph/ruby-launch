@@ -1,5 +1,6 @@
-require 'launch'
-require 'webrick'
+require "rubygems"
+require "webrick"
+require "launch"
 
 ##
 # Launch::WEBrickHTTPServer adds launchd support to WEBrick.
@@ -46,33 +47,26 @@ require 'webrick'
 #     </dict>
 #   </dict>
 #   </plist>
+module Launch
+  class WEBrickHTTPServer < WEBrick::HTTPServer
+    ##
+    # Initializes an HTTP server with +options+ and set the server's listeners
+    # using Launch.  A TERM handler to shut down the server is automatically
+    # set.
+    #
+    # +:LaunchdSockets+ may be set to change the socket key from the default of
+    # <tt>'WEBrickSockets'</tt>
+    def initialize(options = {})
+      options[:DoNotListen] = true
+      sockets_key = options.delete(:LaunchdSockets) || 'WEBrickSockets'
 
-class Launch::WEBrickHTTPServer < WEBrick::HTTPServer
-  
-  include Launch
+      super
 
-  ##
-  # Initializes an HTTP server with +options+ and set the server's listeners
-  # using Launch.  A TERM handler to shut down the server is automatically
-  # set.
-  #
-  # +:LaunchdSockets+ may be set to change the socket key from the default of
-  # <tt>'WEBrickSockets'</tt>
+      @job = Launch::Job.checkin
+      sockets = @job.sockets[sockets_key]
+      listeners.replace(socket)
 
-  def initialize options = {}
-    options[:DoNotListen] = true
-    sockets_key = options.delete(:LaunchdSockets) || 'WEBrickSockets'
-
-    super
-
-    launch_checkin
-
-    servers = launch_sockets sockets_key, TCPServer
-
-    listeners.replace servers
-
-    trap 'TERM' do shutdown end
+      trap("TERM") { shutdown }
+    end
   end
-
 end
-

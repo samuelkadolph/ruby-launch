@@ -1,9 +1,18 @@
 #include <errno.h>
 #include <launch.h>
 #include <ruby.h>
+#include <ruby/st.h>
+#include <ruby/version.h>
+
+#ifdef HAVE_RUBY_IO_H
+#include <ruby/io.h>
+#elif defined(HAVE_RUBYIO_H)
+#include <rubyio.h>
+#endif
 
 VALUE rb_mLaunch;
 VALUE rb_mLaunchMessages;
+VALUE rb_cLaunchError;
 VALUE rb_cLaunchJob;
 VALUE rb_cLaunchJobSocket;
 
@@ -12,17 +21,20 @@ static VALUE launch_data_to_ruby(launch_data_t);
 
 static int ruby_to_launch_data_hash_iterator(VALUE key, VALUE value, VALUE dict)
 {
-  launch_data_dict_insert((launch_data_t)dict, ruby_to_launch_data(value), StringValueCStr(key));
+  launch_data_t key_item = ruby_to_launch_data(key);
+  launch_data_dict_insert((launch_data_t)dict, ruby_to_launch_data(value), launch_data_get_string(key_item));
+  launch_data_free(key_item);
   return ST_CONTINUE;
 }
 
 static launch_data_t ruby_to_launch_data(VALUE obj)
 {
-	launch_data_t result = NULL;
+  launch_data_t result = NULL;
   long i;
+  rb_io_t * fptr;
 
-	switch(TYPE(obj))
-	{
+  switch(TYPE(obj))
+  {
     case T_HASH:
       result = launch_data_alloc(LAUNCH_DATA_DICTIONARY);
       rb_hash_foreach(obj, ruby_to_launch_data_hash_iterator, (VALUE)result);
@@ -45,99 +57,114 @@ static launch_data_t ruby_to_launch_data(VALUE obj)
     case T_FALSE:
       result = launch_data_new_bool(FALSE);
       break;
-		case T_STRING:
-			result = launch_data_new_string(StringValueCStr(obj));
+    case T_STRING:
+      obj = rb_str_to_str(obj);
+      result = launch_data_new_string(StringValueCStr(obj));
       break;
-		default:
-			rb_raise(rb_eTypeError, "can't convert %s to launch data", rb_obj_classname(obj));
-	}
+    case T_FILE:
+      GetOpenFile(obj, fptr);
+#ifdef HAVE_RB_IO_T_FD
+      result = launch_data_new_fd((int)fptr->fd);
+#elif defined(HAVE_ST_F)
+      result = launch_data_new_fd(fileno(fptr->f));
+#endif
+      break;
+    default:
+      rb_raise(rb_eTypeError, "can't convert %s to launch data", rb_obj_classname(obj));
+  }
 
-	return result;
+  return result;
 }
 
 static void launch_data_to_ruby_dict_iterator(launch_data_t item, const char * key, void * hash)
 {
-	rb_hash_aset((VALUE)hash, rb_str_new2(key), launch_data_to_ruby(item));
+  rb_hash_aset((VALUE)hash, rb_str_new2(key), launch_data_to_ruby(item));
 }
 
 static VALUE launch_data_to_ruby(launch_data_t item)
 {
-	VALUE result = Qnil;
-	size_t i, count;
+  VALUE result = Qnil;
+  size_t i, count;
+  int fd;
 
-	switch(launch_data_get_type(item))
-	{
-		case LAUNCH_DATA_DICTIONARY:
-			result = rb_hash_new();
-			launch_data_dict_iterate(item, launch_data_to_ruby_dict_iterator, (void *)result);
-			break;
-		case LAUNCH_DATA_ARRAY:
-			count = launch_data_array_get_count(item);
-			result = rb_ary_new2(count);
-			for (i = 0; i < count; i++)
-				rb_ary_store(result, i, launch_data_to_ruby(launch_data_array_get_index(item, i)));
-			break;
-		case LAUNCH_DATA_FD:
-      // TODO: use rb_io_s_for_fd
-			result = INT2NUM(launch_data_get_fd(item));
-			break;
-		case LAUNCH_DATA_INTEGER:
-			result = LONG2NUM(launch_data_get_integer(item));
-			break;
-		case LAUNCH_DATA_REAL:
-			result = DBL2NUM(launch_data_get_real(item));
-			break;
-		case LAUNCH_DATA_BOOL:
-			result = launch_data_get_bool(item) == TRUE ? Qtrue : Qfalse;
-			break;
-		case LAUNCH_DATA_STRING:
-			result = rb_str_new2(launch_data_get_string(item));
-			break;
-		case LAUNCH_DATA_OPAQUE:
-			result = rb_str_new(launch_data_get_opaque(item), launch_data_get_opaque_size(item));
-			break;
-		case LAUNCH_DATA_ERRNO:
+  switch(launch_data_get_type(item))
+  {
+    case LAUNCH_DATA_DICTIONARY:
+      result = rb_hash_new();
+      launch_data_dict_iterate(item, launch_data_to_ruby_dict_iterator, (void *)result);
+      break;
+    case LAUNCH_DATA_ARRAY:
+      count = launch_data_array_get_count(item);
+      result = rb_ary_new2(count);
+      for (i = 0; i < count; i++)
+        rb_ary_store(result, i, launch_data_to_ruby(launch_data_array_get_index(item, i)));
+      break;
+    case LAUNCH_DATA_FD:
+      fd = launch_data_get_fd(item);
+      if (fd >= 0)
+        result = rb_funcall(rb_path2class("TCPServer"), rb_intern("for_fd"), 1, INT2NUM(launch_data_get_fd(item)));
+      else
+        result = INT2NUM(launch_data_get_fd(item));
+      break;
+    case LAUNCH_DATA_INTEGER:
+      result = LONG2NUM(launch_data_get_integer(item));
+      break;
+    case LAUNCH_DATA_REAL:
+      result = DBL2NUM(launch_data_get_real(item));
+      break;
+    case LAUNCH_DATA_BOOL:
+      result = launch_data_get_bool(item) == TRUE ? Qtrue : Qfalse;
+      break;
+    case LAUNCH_DATA_STRING:
+      result = rb_str_new2(launch_data_get_string(item));
+      break;
+    case LAUNCH_DATA_OPAQUE:
+      result = rb_str_new(launch_data_get_opaque(item), launch_data_get_opaque_size(item));
+      break;
+    case LAUNCH_DATA_ERRNO:
       errno = launch_data_get_errno(item);
-
       if (errno)
         rb_sys_fail("launch");
       else
         result = Qtrue;
-			break;
-		case LAUNCH_DATA_MACHPORT:
-			break;
+      break;
+    case LAUNCH_DATA_MACHPORT:
+      break;
     default:
       rb_warn("unknown launch_data_type_t %d", launch_data_get_type(item));
       break;
-	}
+  }
 
-	return result;
+  return result;
 }
 
 static VALUE launch_message(VALUE self, VALUE obj)
 {
-	VALUE result = Qnil;
-	launch_data_t item, response;
+  VALUE result = Qnil;
+  launch_data_t item, response;
 
-	item = ruby_to_launch_data(obj);
+  item = ruby_to_launch_data(obj);
+  if (item == NULL)
+    rb_raise(rb_cLaunchError, "item is nil");
 
   response = launch_msg(item);
   launch_data_free(item);
 
-	if (response == NULL)
-		rb_sys_fail("launch");
+  if (response == NULL)
+    rb_sys_fail("launch");\
 
-	result = launch_data_to_ruby(response);
-	launch_data_free(response);
+  result = launch_data_to_ruby(response);
+  launch_data_free(response);
 
-	return result;
+  return result;
 }
-
 
 void Init_launch()
 {
+  rb_require("socket");
+
   rb_mLaunch = rb_define_module("Launch");
-	rb_define_singleton_method(rb_mLaunch, "message", launch_message, 1);
+  rb_define_singleton_method(rb_mLaunch, "message", launch_message, 1);
 
   rb_mLaunchMessages = rb_define_module_under(rb_mLaunch, "Messages");
   rb_const_set(rb_mLaunchMessages, rb_intern("SUBMITJOB"), rb_str_new2(LAUNCH_KEY_SUBMITJOB));
@@ -147,6 +174,8 @@ void Init_launch()
   rb_const_set(rb_mLaunchMessages, rb_intern("GETJOB"),    rb_str_new2(LAUNCH_KEY_GETJOB));
   rb_const_set(rb_mLaunchMessages, rb_intern("GETJOBS"),   rb_str_new2(LAUNCH_KEY_GETJOBS));
   rb_const_set(rb_mLaunchMessages, rb_intern("CHECKIN"),   rb_str_new2(LAUNCH_KEY_CHECKIN));
+
+  rb_cLaunchError = rb_define_class_under(rb_mLaunch, "Error", rb_eStandardError);
 
   rb_cLaunchJob = rb_define_class_under(rb_mLaunch, "Job", rb_cObject);
   rb_const_set(rb_cLaunchJob, rb_intern("LABEL"),                        rb_str_new2(LAUNCH_JOBKEY_LABEL));
@@ -228,7 +257,6 @@ void Init_launch()
   rb_const_set(rb_cLaunchJob, rb_intern("DISABLED_MACHINETYPE"),         rb_str_new2(LAUNCH_JOBKEY_DISABLED_MACHINETYPE));
   rb_const_set(rb_cLaunchJob, rb_intern("DISABLED_MODELNAME"),           rb_str_new2(LAUNCH_JOBKEY_DISABLED_MODELNAME));
 
-  rb_require("socket");
   rb_cLaunchJobSocket = rb_define_class_under(rb_cLaunchJob, "Socket", rb_path2class("TCPSocket"));
   rb_const_set(rb_cLaunchJobSocket, rb_intern("TYPE"),           rb_str_new2(LAUNCH_JOBSOCKETKEY_TYPE));
   rb_const_set(rb_cLaunchJobSocket, rb_intern("PASSIVE"),        rb_str_new2(LAUNCH_JOBSOCKETKEY_PASSIVE));

@@ -1,3 +1,4 @@
+require "socket"
 require "launch.so"
 
 module Launch
@@ -6,7 +7,7 @@ module Launch
 
   class << self
     def jobs
-      message(Messages::GETJOBS).values
+      message(Messages::GETJOBS).values.map(&Job.method(:from_launch))
     end
   end
 end
