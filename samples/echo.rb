@@ -38,6 +38,7 @@ job.sockets["echo"] = TCPServer.new(12345)
 
 begin
   job.submit
+  # job.start # uncomment to start server immediately instead of on demand
 
   $stdout.puts "Echo server started on port 12345."
   $stdout.puts "Press ^C or enter to shut down the server."
