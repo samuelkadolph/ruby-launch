@@ -80,7 +80,9 @@ module Launch
     launch_attr :pid, PID, :read_only => true
     launch_attr :policies, POLICIES
     launch_attr :program, PROGRAM
-    launch_attr :program_arguments, PROGRAMARGUMENTS
+    launch_attr :program_arguments, PROGRAMARGUMENTS do
+      []
+    end
     launch_attr :queue_directories, QUEUEDIRECTORIES
     launch_attr :root_directory, ROOTDIRECTORY
     launch_attr :run_at_load, RUNATLOAD
