@@ -87,7 +87,7 @@ module Launch
     launch_attr :root_directory, ROOTDIRECTORY
     launch_attr :run_at_load, RUNATLOAD
     launch_attr :sockets, SOCKETS do
-        Hash.new { |h, k| h[k] = [] }
+      Hash.new { |h, k| h[k] = [] }
     end
     launch_attr :soft_resource_limits, SOFTRESOURCELIMITS
     launch_attr :standard_error_path, STANDARDERRORPATH
